@@ -1,4 +1,19 @@
 import streamlit as st
+
+# --- SIMPLE PASSWORD PROTECTION ---
+PASSWORD = "Ivers0n2026"  # change to whatever you like
+
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+if not st.session_state.auth:
+    pwd = st.text_input("🔒 Enter password to access the Italy Trip Planner", type="password")
+    if pwd == PASSWORD:
+        st.session_state.auth = True
+        st.experimental_rerun()  # refresh app after login
+    else:
+        st.stop()  # stops everything else from loading
+        import streamlit as st
 import pandas as pd
 import json
 import os
