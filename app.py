@@ -1,28 +1,28 @@
 import streamlit as st
 
-# --- SIMPLE PASSWORD PROTECTION ---
-PASSWORD = "Ivers0n2026"  # change to whatever you like
+# --- PASSWORD PROTECTION ---
+PASSWORD = "Ivers0n2026"
 
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    pwd = st.text_input("🔒 Enter password to access the Italy Trip Planner", type="password")
+    pwd = st.text_input("🔒 Enter password", type="password")
     if pwd == PASSWORD:
         st.session_state.auth = True
-        st.experimental_rerun()  # refresh app after login
+        st.experimental_rerun()
     else:
         st.stop()  # stops everything else from loading
-        import streamlit as st
+
+# --- EVERYTHING BELOW THIS LINE ONLY LOADS IF AUTHENTICATED ---
 import pandas as pd
 import json
 import os
 from datetime import date, timedelta
 import urllib.parse
 
-# --- PAGE CONFIG ---
 st.set_page_config(page_title="Italy Trip Planner", layout="wide")
-
+# ... rest of your Italy itinerary code ...
 # Custom CSS for a cleaner interface
 st.markdown("""
     <style>
