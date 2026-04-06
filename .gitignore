@@ -1,0 +1,5 @@
+my_trip.json
+my_trip_data.json
+tickets/
+.DS_Store
+__pycache__/
