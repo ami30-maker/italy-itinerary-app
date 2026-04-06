@@ -1,7 +1,7 @@
 import streamlit as st
 
 # --- PASSWORD PROTECTION ---
-PASSWORD = "Ivers0n2026"
+PASSWORD = "Ivers0n"
 
 if "auth" not in st.session_state:
     st.session_state.auth = False
