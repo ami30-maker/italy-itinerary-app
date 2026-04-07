@@ -28,8 +28,6 @@ st.set_page_config(page_title="Italy Trip Planner", layout="wide", page_icon="�
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; max-width: 1100px; }
-    .timeline-time { font-weight: 700; color: #3f51b5; font-size: 1.1rem; }
-    .timeline-title { font-weight: bold; font-size: 1.2rem; margin: 0; color: #2c3e50;}
     .lodging-card { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; }
     .ticket-box { background-color: #e3f2fd; padding: 10px; border-radius: 5px; border-left: 5px solid #2196f3; margin-top: 10px; }
     </style>
@@ -59,8 +57,16 @@ def load_data():
         itinerary = {}
         for d_str, content in raw.get("itinerary", {}).items():
             df = pd.DataFrame(content["activities"]).fillna("")
-            if "Order" not in df.columns:
+            
+            # ✅ Ensure columns exist
+            required_cols = ["Group","Events","Time","Tickets","Manual Location","Location","Notes","Order"]
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = ""
+
+            if df["Order"].eq("").all():
                 df["Order"] = range(len(df))
+
             itinerary[date.fromisoformat(d_str)] = {
                 "lodging": pd.DataFrame(content["lodging"]).fillna(""),
                 "activities": df
@@ -77,13 +83,24 @@ if "app_data" not in st.session_state:
 def process_itinerary_sorting(df, city):
     df = df.fillna("")
 
-    if "Order" not in df.columns:
+    required_cols = ["Manual Location","Events","Location","Order"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = ""
+
+    if df["Order"].eq("").all():
         df["Order"] = range(len(df))
 
     for i, row in df.iterrows():
-        q = row["Manual Location"].strip() if row["Manual Location"].strip() else row["Events"].strip()
+        manual = str(row.get("Manual Location","")).strip()
+        event = str(row.get("Events","")).strip()
+        q = manual if manual else event
+
         if q:
-            df.at[i, "Location"] = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(f'{q} {city} Italy')}"
+            df.at[i, "Location"] = (
+                f"https://www.google.com/maps/search/?api=1&query="
+                f"{urllib.parse.quote(f'{q} {city} Italy')}"
+            )
 
     return df.sort_values("Order").reset_index(drop=True)
 
@@ -106,7 +123,8 @@ if page == "🗺️ Itinerary":
         days = [dr[0] + timedelta(days=i) for i in range((dr[1]-dr[0]).days + 1)]
     else: st.stop()
 
-    if "nav_idx" not in st.session_state: st.session_state.nav_idx = 0
+    if "nav_idx" not in st.session_state:
+        st.session_state.nav_idx = 0
     st.session_state.nav_idx = min(st.session_state.nav_idx, len(days)-1)
 
     c_prev, c_head, c_next = st.columns([1, 4, 1])
@@ -117,18 +135,24 @@ if page == "🗺️ Itinerary":
 
     sel_date = days[st.session_state.nav_idx]
     date_str = sel_date.isoformat()
+
     c_head.markdown(f"<h1 style='text-align:center;'>{sel_date.strftime('%A, %B %d')}</h1>", unsafe_allow_html=True)
 
     if sel_date not in st.session_state.app_data["itinerary"]:
         st.session_state.app_data["itinerary"][sel_date] = {
-            "lodging": pd.DataFrame([{"Type":"Start:", "City":"", "Check-in/Check-out":"", "Address":""},
-                                     {"Type":"End:", "City":"", "Check-in/Check-out":"", "Address":""}]),
-            "activities": pd.DataFrame(columns=["Group","Events","Time","Tickets","Manual Location","Location","Notes","Order"])
+            "lodging": pd.DataFrame([
+                {"Type":"Start:", "City":"", "Check-in/Check-out":"", "Address":""},
+                {"Type":"End:", "City":"", "Check-in/Check-out":"", "Address":""}
+            ]),
+            "activities": pd.DataFrame(columns=[
+                "Group","Events","Time","Tickets","Manual Location","Location","Notes","Order"
+            ])
         }
 
     day_data = st.session_state.app_data["itinerary"][sel_date]
     edit_mode = st.toggle("✏️ Edit Mode", value=False)
 
+    # --- EDIT MODE ---
     if edit_mode:
         u_lod = st.data_editor(day_data["lodging"], use_container_width=True, hide_index=True)
 
@@ -140,7 +164,7 @@ if page == "🗺️ Itinerary":
             column_config={
                 "Group": st.column_config.SelectboxColumn(
                     "Group",
-                    options=["Morning", "Afternoon", "Evening", "Flexible / Anytime"]
+                    options=["Morning","Afternoon","Evening","Flexible / Anytime"]
                 ),
                 "Location": None,
                 "Order": None
@@ -153,12 +177,13 @@ if page == "🗺️ Itinerary":
             st.session_state.app_data["itinerary"][sel_date] = {"lodging": u_lod, "activities": u_act}
             save_data(); st.rerun()
 
+    # --- READ MODE ---
     else:
         l_df = day_data["lodging"]
         valid_l = l_df[(l_df["City"].str.strip() != "") | (l_df["Address"].str.strip() != "")]
         if not valid_l.empty:
             cols = st.columns(len(valid_l))
-            for i, (idx, row) in enumerate(valid_l.iterrows()):
+            for i, (_, row) in enumerate(valid_l.iterrows()):
                 with cols[i]:
                     st.markdown(f"<div class='lodging-card'><b>{row['Type']}</b> {row['City']}<br>🕐 {row['Check-in/Check-out']}</div>", unsafe_allow_html=True)
                     if row['Address']:
@@ -171,14 +196,14 @@ if page == "🗺️ Itinerary":
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([1,4,1,1], vertical_alignment="center")
 
-                if r['Time']:
+                if r["Time"]:
                     c1.write(f"**{r['Time']}**")
 
                 c2.write(f"**{r['Events']}**")
-                if r['Notes']:
+                if r["Notes"]:
                     c2.caption(f"📝 {r['Notes']}")
 
-                if r['Location']:
+                if r["Location"]:
                     c3.markdown(
                         f'<a href="{r["Location"]}" target="_blank">📍 Map</a>',
                         unsafe_allow_html=True
@@ -256,7 +281,8 @@ elif page == "🎒 Packing List":
             if u_csv:
                 items = pd.read_csv(u_csv, header=None)[0].dropna().astype(str).tolist()
                 for i in items:
-                    if i not in u_data["items"]: u_data["items"][i] = False
+                    if i not in u_data["items"]:
+                        u_data["items"][i] = False
                 save_data(); st.success("CSV Imported!"); st.rerun()
 
             with st.form(f"man_{sel_user}", clear_on_submit=True):
