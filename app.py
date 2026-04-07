@@ -6,34 +6,48 @@ from datetime import date, timedelta
 import urllib.parse
 
 # --- CONFIG & THEME ---
-st.set_page_config(page_title="Italia 2026 | Travel Itinerary", layout="wide", page_icon="🇮🇹")
+st.set_page_config(page_title="Italia 2026", layout="wide", page_icon="🇮🇹")
 
-# Professional CSS Overhaul
+# Professional CSS - Reverted to your preferred Bordered Cards & Lodging Styles
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #fcfcfc; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    
     .block-container { padding-top: 2rem; max-width: 1100px; }
     
-    /* Card Styling */
-    .stElementContainer div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 12px;
-        border: 1px solid #efefef;
-        background: white;
-        padding: 10px;
+    /* Lodging Style Reverted */
+    .lodging-card { 
+        background-color: #f8f9fa; 
+        padding: 15px; 
+        border-radius: 10px; 
+        border: 1px solid #e9ecef; 
         margin-bottom: 10px;
     }
+
+    h1 { font-weight: 800; color: #1a1a1a; text-align: center; margin-bottom: 0px; }
     
-    /* Headers & Text */
-    h1 { font-weight: 800; color: #1d1d1f; letter-spacing: -1.5px; }
-    .time-text { font-weight: 700; color: #0071e3; font-size: 0.9rem; text-transform: uppercase; }
-    .event-title { font-weight: 600; color: #1d1d1f; font-size: 1.25rem; margin: 0; }
-    .ticket-badge { background: #fff9c4; color: #5d4037; padding: 3px 8px; border-radius: 5px; font-size: 0.75rem; font-weight: 700; border: 1px solid #fff176; }
-    .notes-text { color: #86868b; font-size: 0.85rem; }
+    /* New Daily Subtitle Style */
+    .subtitle { 
+        font-size: 1.2rem; 
+        color: #666; 
+        font-style: italic; 
+        text-align: center; 
+        margin-bottom: 25px; 
+        margin-top: 5px;
+    }
     
-    /* Buttons & Nav */
-    .stButton>button { border-radius: 6px; border: 1px solid #d2d2d7; background: white; font-size: 0.8rem; }
-    .stButton>button:hover { border-color: #0071e3; color: #0071e3; }
+    .time-text { font-weight: 700; color: #007AFF; margin-bottom: 5px; display: block; }
+    .ticket-badge { 
+        background-color: #ffd700; 
+        padding: 2px 8px; 
+        border-radius: 4px; 
+        font-weight: bold; 
+        font-size: 0.8rem; 
+        color: black;
+    }
+    
+    .stButton>button { border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -48,6 +62,7 @@ def save_data():
     serializable = {}
     for d, content in st.session_state.app_data["itinerary"].items():
         serializable[d.isoformat()] = {
+            "subtitle": content.get("subtitle", ""),
             "lodging": content["lodging"].fillna("").to_dict('records'),
             "activities": content["activities"].fillna("").to_dict('records')
         }
@@ -67,6 +82,7 @@ def load_data():
             for col in COLUMN_ORDER:
                 if col not in df.columns: df[col] = "" if col != "Order" else range(len(df))
             itinerary[date.fromisoformat(d_str)] = {
+                "subtitle": content.get("subtitle", ""),
                 "lodging": pd.DataFrame(content.get("lodging", [])).fillna(""),
                 "activities": df[COLUMN_ORDER]
             }
@@ -76,17 +92,10 @@ def load_data():
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_data()
 
-def smart_sort(df):
-    group_map = {"Morning": 1, "Afternoon": 2, "Evening": 3, "Flexible / Anytime": 4}
-    df["_g_val"] = df["Group"].map(group_map).fillna(5)
-    df = df.sort_values(["_g_val", "Time"]).drop(columns=["_g_val"])
-    df["Order"] = range(len(df))
-    return df
-
 # --- NAVIGATION ---
-page = st.sidebar.radio("ITALIA 2026", ["📍 ITINERARY", "🎒 PACKING"])
+page = st.sidebar.radio("Navigate", ["🗺️ Itinerary", "🎒 Packing"])
 
-if page == "📍 ITINERARY":
+if page == "🗺️ Itinerary":
     dr = st.sidebar.date_input("Trip Window", value=(date(2026,5,4), date(2026,5,20)))
     if not (isinstance(dr, tuple) and len(dr)==2): st.stop()
     days = [dr[0] + timedelta(days=i) for i in range((dr[1]-dr[0]).days+1)]
@@ -95,117 +104,149 @@ if page == "📍 ITINERARY":
     st.session_state.nav_idx = min(st.session_state.nav_idx, len(days)-1)
 
     c_prev, c_head, c_next = st.columns([1,4,1])
-    if c_prev.button("PREV", use_container_width=True): 
+    if c_prev.button("⬅️ PREV", use_container_width=True): 
         st.session_state.nav_idx = max(0, st.session_state.nav_idx-1); st.rerun()
-    if c_next.button("NEXT", use_container_width=True): 
+    if c_next.button("NEXT ➡️", use_container_width=True): 
         st.session_state.nav_idx = min(len(days)-1, st.session_state.nav_idx+1); st.rerun()
     
     sel_date = days[st.session_state.nav_idx]
-    date_str = sel_date.isoformat()
-    c_head.markdown(f"<h1 style='text-align:center;'>{sel_date.strftime('%b %d')}</h1>", unsafe_allow_html=True)
-    c_head.markdown(f"<p style='text-align:center; color:#86868b; margin-top:-15px;'>{sel_date.strftime('%A')}</p>", unsafe_allow_html=True)
-
+    
     if sel_date not in st.session_state.app_data["itinerary"]:
         st.session_state.app_data["itinerary"][sel_date] = {
-            "lodging": pd.DataFrame([{"Type":"Stay","City":"","Check-in/Check-out":"","Address":""}]),
+            "subtitle": "",
+            "lodging": pd.DataFrame([{"Type":"Start:","City":"","Check-in/Check-out":"","Address":""},
+                                     {"Type":"End:","City":"","Check-in/Check-out":"","Address":""}]),
             "activities": pd.DataFrame(columns=COLUMN_ORDER)
         }
-
+    
     day_data = st.session_state.app_data["itinerary"][sel_date]
-    edit_mode = st.toggle("Editor View", value=False)
+
+    # Header & New Subtitle Logic
+    st.markdown(f"<h1>{sel_date.strftime('%A, %B %d')}</h1>", unsafe_allow_html=True)
+    if day_data["subtitle"]:
+        st.markdown(f"<p class='subtitle'>{day_data['subtitle']}</p>", unsafe_allow_html=True)
+
+    edit_mode = st.toggle("✏️ Edit Mode", value=False)
 
     if edit_mode:
+        # Subtitle Input
+        new_sub = st.text_input("Daily Highlights (Subtitle)", value=day_data["subtitle"], placeholder="e.g. LDS Temple & Pantheon")
+        
         u_lod = st.data_editor(day_data["lodging"], use_container_width=True, hide_index=True)
-        u_act = st.data_editor(day_data["activities"], num_rows="dynamic", use_container_width=True, hide_index=True,
-                               column_config={
-                                   "Group": st.column_config.SelectboxColumn("Group", options=["Morning","Afternoon","Evening","Flexible / Anytime"]),
-                                   "Order": st.column_config.NumberColumn("Sort", disabled=True),
-                                   "Photo_Path": st.column_config.TextColumn("Img Link")
-                               })
+        u_act = st.data_editor(day_data["activities"], num_rows="dynamic", use_container_width=True, hide_index=True)
         
-        st.write("### 🖼️ Visuals & Sorting")
+        # Web Photo Assistant
+        st.write("### 🖼️ Photo Assistant")
         for i, row in u_act.iterrows():
-            c1, c2, c3 = st.columns([2, 2, 1])
-            c1.write(f"**{row['Events'] or 'New Activity'}**")
-            
-            # Smart Search from Unsplash
-            if c2.button(f"Search Web Photo", key=f"web_{i}_{date_str}"):
-                query = row['Events'] if row['Events'] else "Italy Travel"
+            c1, c2 = st.columns([3, 1])
+            if c1.button(f"Link Web Photo for: {row['Events'] or 'Activity'}", key=f"photo_{i}"):
+                query = row['Events'] if row['Events'] else "Italy"
                 u_act.at[i, "Photo_Path"] = f"https://source.unsplash.com/featured/800x600/?{urllib.parse.quote(query)}"
-                st.success("Web photo linked!")
+                st.toast(f"Photo linked for {row['Events']}")
 
-            p_up = c3.file_uploader("Upload", type=["jpg","png"], key=f"up_{i}_{date_str}", label_visibility="collapsed")
-            if p_up:
-                p_path = os.path.join(PHOTO_DIR, f"{date_str}_{i}_{p_up.name}")
-                with open(p_path, "wb") as f: f.write(p_up.getbuffer())
-                u_act.at[i, "Photo_Path"] = p_path
-        
-        if st.button("Save & Auto-Sort Activities"):
-            u_act = smart_sort(u_act)
-            st.session_state.app_data["itinerary"][sel_date] = {"lodging": u_lod, "activities": u_act}
+        if st.button("Save All Changes"):
+            # Restore original Google Maps Hyperlink logic
+            city = u_lod.iloc[0]["City"] if not u_lod.empty else "Italy"
+            for i, row in u_act.iterrows():
+                q = row['Manual Location'] if row['Manual Location'] else row['Events']
+                if q:
+                    u_act.at[i, "Location"] = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(f'{q} {city} Italy')}"
+            
+            st.session_state.app_data["itinerary"][sel_date] = {
+                "subtitle": new_sub,
+                "lodging": u_lod,
+                "activities": u_act
+            }
             save_data(); st.rerun()
 
     else:
-        # READ MODE
+        # Read Mode - Lodging Card
         l_df = day_data["lodging"]
-        for _, r in l_df[l_df["City"] != ""].iterrows():
-            st.info(f"🏠 **{r['Type']}**: {r['City']} | {r['Check-in/Check-out']} \n\n {r['Address']}")
+        valid_l = l_df[l_df["City"] != ""]
+        if not valid_l.empty:
+            cols = st.columns(len(valid_l))
+            for i, (_, r) in enumerate(valid_l.iterrows()):
+                cols[i].markdown(f"<div class='lodging-card'><b>{r['Type']}</b> {r['City']}<br>🕐 {r['Check-in/Check-out']}</div>", unsafe_allow_html=True)
 
+        # Read Mode - Activities Card with Outline
         a_df = day_data["activities"].sort_values("Order")
         for i, r in a_df.iterrows():
-            with st.container():
+            with st.container(border=True):
                 c_img, c_main, c_nav = st.columns([1.5, 5, 1.2], vertical_alignment="center")
                 
                 if r["Photo_Path"]:
                     c_img.image(r["Photo_Path"], use_container_width=True)
-                else:
-                    c_img.write("🖼️")
                 
                 with c_main:
-                    st.markdown(f"<span class='time-text'>{r['Time']}</span>", unsafe_allow_html=True)
-                    st.markdown(f"<p class='event-title'>{r['Events']}</p>", unsafe_allow_html=True)
+                    if r['Time']: st.markdown(f"<span class='time-text'>{r['Time']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"### {r['Events']}")
                     if r["Tickets"]: st.markdown(f"<span class='ticket-badge'>🎫 {r['Tickets']}</span>", unsafe_allow_html=True)
-                    if r["Notes"]: st.markdown(f"<span class='notes-text'>{r['Notes']}</span>", unsafe_allow_html=True)
+                    if r["Notes"]: st.caption(f"📝 {r['Notes']}")
 
                 with c_nav:
-                    # Map and Sorting combined on the right
-                    if r["Location"]: 
-                        st.markdown(f"[📍 Map]({r['Location']})")
+                    # Map Pin Hyperlink
+                    if r["Location"]: st.markdown(f"[📍 Map]({r['Location']})")
                     
-                    # Sorting Arrows
+                    # Small Sorting Arrows
                     cu, cd = st.columns(2)
-                    if cu.button("▴", key=f"u_{i}_{date_str}"):
+                    if cu.button("▴", key=f"u_{i}"):
                         if i > 0:
                             a_df.iloc[i-1], a_df.iloc[i] = a_df.iloc[i].copy(), a_df.iloc[i-1].copy()
                             a_df["Order"] = range(len(a_df))
                             st.session_state.app_data["itinerary"][sel_date]["activities"] = a_df
                             save_data(); st.rerun()
-                    if cd.button("▾", key=f"d_{i}_{date_str}"):
+                    if cd.button("▾", key=f"d_{i}"):
                         if i < len(a_df)-1:
                             a_df.iloc[i+1], a_df.iloc[i] = a_df.iloc[i].copy(), a_df.iloc[i+1].copy()
                             a_df["Order"] = range(len(a_df))
                             st.session_state.app_data["itinerary"][sel_date]["activities"] = a_df
                             save_data(); st.rerun()
 
-# --- PACKING LIST ---
-elif page == "🎒 PACKING":
+# --- PACKING LIST PAGE ---
+elif page == "🎒 Packing":
     st.title("🎒 Packing Lists")
     users = st.session_state.app_data["packing"]["users"]
+    
     c1, c2 = st.columns(2)
-    with c1.form("add_u", clear_on_submit=True):
-        u_name = st.text_input("New Traveler")
-        if st.form_submit_button("Create"):
-            if u_name: 
-                users[u_name.title()] = {"items": {}}
+    with c1.form("new_traveler", clear_on_submit=True):
+        new_name = st.text_input("Add Traveler")
+        if st.form_submit_button("Create Profile"):
+            if new_name:
+                users[new_name.title()] = {"items": {}}
                 save_data(); st.rerun()
     
     sel_user = c2.selectbox("Select Traveler", ["--"] + list(users.keys()))
+    
     if sel_user != "--":
         u_data = users[sel_user]
-        # Packing Logic remains same...
-        st.subheader(f"{sel_user}'s Gear")
-        for item in list(u_data["items"].keys()):
-            if st.checkbox(item, value=u_data["items"][item], key=f"p_{sel_user}_{item}"):
+        st.divider()
+        
+        # Add Item Form
+        with st.form(f"add_item_{sel_user}", clear_on_submit=True):
+            item_in = st.text_input("Add specific item")
+            if st.form_submit_button("Add"):
+                if item_in:
+                    u_data["items"][item_in] = False
+                    save_data(); st.rerun()
+
+        # CSV Uploader
+        csv_up = st.file_uploader("Upload CSV list", type="csv", key=f"csv_{sel_user}")
+        if csv_up:
+            items = pd.read_csv(csv_up, header=None)[0].dropna().astype(str).tolist()
+            for i in items: u_data["items"][i] = False
+            save_data(); st.success("List Imported!"); st.rerun()
+
+        # Display List
+        st.subheader(f"✅ {sel_user}'s Checklist")
+        for item, checked in list(u_data["items"].items()):
+            col_a, col_b = st.columns([5, 1])
+            if col_a.checkbox(item, value=checked, key=f"chk_{sel_user}_{item}"):
                 u_data["items"][item] = True
             else: u_data["items"][item] = False
-            save_data()
+            
+            if col_b.button("🗑️", key=f"del_{sel_user}_{item}"):
+                del u_data["items"][item]
+                save_data(); st.rerun()
+        
+        if st.button(f"Delete {sel_user}'s Entire Profile"):
+            del users[sel_user]; save_data(); st.rerun()
