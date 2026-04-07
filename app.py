@@ -51,7 +51,6 @@ def save_data():
         json.dump(full_data, f)
 
 def load_data():
-    # Empty default structure
     base = {"itinerary": {}, "packing": {"users": {}}}
     if not os.path.exists(SAVE_FILE): return base
     try:
@@ -59,44 +58,42 @@ def load_data():
             raw = json.load(f)
         itinerary = {}
         for d_str, content in raw.get("itinerary", {}).items():
+            df = pd.DataFrame(content["activities"]).fillna("")
+            if "Order" not in df.columns:
+                df["Order"] = range(len(df))
             itinerary[date.fromisoformat(d_str)] = {
                 "lodging": pd.DataFrame(content["lodging"]).fillna(""),
-                "activities": pd.DataFrame(content["activities"]).fillna("")
+                "activities": df
             }
         packing = raw.get("packing", {"users": {}})
         return {"itinerary": itinerary, "packing": packing}
-    except: return base
+    except:
+        return base
 
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_data()
 
 # --- HELPERS ---
-def parse_time(t_str):
-    t = str(t_str).strip().upper()
-    if not t: return 9999
-    try:
-        is_pm = "PM" in t
-        is_am = "AM" in t
-        clean = t.replace("AM", "").replace("PM", "").strip()
-        parts = clean.split(":")
-        h = int(parts[0])
-        m = int(parts[1]) if len(parts) > 1 else 0
-        if is_pm and h != 12: h += 12
-        if is_am and h == 12: h = 0
-        return h * 60 + m
-    except: return 9999
-
 def process_itinerary_sorting(df, city):
     df = df.fillna("")
+
+    if "Order" not in df.columns:
+        df["Order"] = range(len(df))
+
     for i, row in df.iterrows():
         q = row["Manual Location"].strip() if row["Manual Location"].strip() else row["Events"].strip()
         if q:
             df.at[i, "Location"] = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(f'{q} {city} Italy')}"
-    
-    df["_sort_time"] = df["Time"].apply(parse_time)
-    order = {"Morning": 1, "Afternoon": 2, "Evening": 3, "Flexible / Anytime": 4}
-    df["_sort_group"] = df["Group"].map(order).fillna(5)
-    return df.sort_values(["_sort_group", "_sort_time"]).drop(columns=["_sort_time", "_sort_group"]).reset_index(drop=True)
+
+    return df.sort_values("Order").reset_index(drop=True)
+
+def move_row(df, index, direction):
+    if direction == "up" and index > 0:
+        df.iloc[[index-1, index]] = df.iloc[[index, index-1]].values
+    elif direction == "down" and index < len(df)-1:
+        df.iloc[[index+1, index]] = df.iloc[[index, index+1]].values
+    df["Order"] = range(len(df))
+    return df
 
 # --- NAVIGATION ---
 page = st.sidebar.radio("Navigate to:", ["🗺️ Itinerary", "🎒 Packing List"])
@@ -111,11 +108,13 @@ if page == "🗺️ Itinerary":
 
     if "nav_idx" not in st.session_state: st.session_state.nav_idx = 0
     st.session_state.nav_idx = min(st.session_state.nav_idx, len(days)-1)
-    
+
     c_prev, c_head, c_next = st.columns([1, 4, 1])
-    if c_prev.button("⬅️ Prev", use_container_width=True): st.session_state.nav_idx = max(0, st.session_state.nav_idx - 1); st.rerun()
-    if c_next.button("Next ➡️", use_container_width=True): st.session_state.nav_idx = min(len(days)-1, st.session_state.nav_idx + 1); st.rerun()
-    
+    if c_prev.button("⬅️ Prev", use_container_width=True):
+        st.session_state.nav_idx = max(0, st.session_state.nav_idx - 1); st.rerun()
+    if c_next.button("Next ➡️", use_container_width=True):
+        st.session_state.nav_idx = min(len(days)-1, st.session_state.nav_idx + 1); st.rerun()
+
     sel_date = days[st.session_state.nav_idx]
     date_str = sel_date.isoformat()
     c_head.markdown(f"<h1 style='text-align:center;'>{sel_date.strftime('%A, %B %d')}</h1>", unsafe_allow_html=True)
@@ -124,23 +123,37 @@ if page == "🗺️ Itinerary":
         st.session_state.app_data["itinerary"][sel_date] = {
             "lodging": pd.DataFrame([{"Type":"Start:", "City":"", "Check-in/Check-out":"", "Address":""},
                                      {"Type":"End:", "City":"", "Check-in/Check-out":"", "Address":""}]),
-            "activities": pd.DataFrame(columns=["Group", "Events", "Time", "Tickets", "Manual Location", "Location", "Notes"])
+            "activities": pd.DataFrame(columns=["Group","Events","Time","Tickets","Manual Location","Location","Notes","Order"])
         }
-    
+
     day_data = st.session_state.app_data["itinerary"][sel_date]
     edit_mode = st.toggle("✏️ Edit Mode", value=False)
 
     if edit_mode:
         u_lod = st.data_editor(day_data["lodging"], use_container_width=True, hide_index=True)
-        u_act = st.data_editor(day_data["activities"], num_rows="dynamic", use_container_width=True, hide_index=True,
-            column_config={"Group": st.column_config.SelectboxColumn("Group", options=["Morning", "Afternoon", "Evening", "Flexible / Anytime"])})
+
+        u_act = st.data_editor(
+            day_data["activities"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Group": st.column_config.SelectboxColumn(
+                    "Group",
+                    options=["Morning", "Afternoon", "Evening", "Flexible / Anytime"]
+                ),
+                "Location": None,
+                "Order": None
+            }
+        )
+
         if not u_lod.equals(day_data["lodging"]) or not u_act.equals(day_data["activities"]):
             city = u_lod.iloc[1]["City"] if u_lod.iloc[1]["City"] else "Italy"
             u_act = process_itinerary_sorting(u_act, city)
             st.session_state.app_data["itinerary"][sel_date] = {"lodging": u_lod, "activities": u_act}
             save_data(); st.rerun()
+
     else:
-        # Lodging
         l_df = day_data["lodging"]
         valid_l = l_df[(l_df["City"].str.strip() != "") | (l_df["Address"].str.strip() != "")]
         if not valid_l.empty:
@@ -152,28 +165,42 @@ if page == "🗺️ Itinerary":
                         q = urllib.parse.quote(f"{row['Address']} {row['City']} Italy")
                         st.markdown(f"📍 [{row['Address']}](https://www.google.com/maps/search/?api=1&query={q})")
 
-        # Activities
-        a_df = day_data["activities"]
-        for grp in ["Morning", "Afternoon", "Evening", "Flexible / Anytime"]:
-            sub = a_df[a_df["Group"] == grp]
-            if not sub.empty:
-                st.markdown(f"#### {grp}")
-                for _, r in sub.iterrows():
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([1, 4, 1], vertical_alignment="center")
-                        c1.write(f"**{r['Time']}**")
-                        c2.write(f"**{r['Events']}**")
-                        if r['Notes']: c2.caption(f"📝 {r['Notes']}")
-                        if r['Location']: c3.markdown(f"[📍 Map]({r['Location']})")
+        a_df = day_data["activities"].sort_values("Order").reset_index(drop=True)
 
-    # --- DATE-SPECIFIC TICKET SECTION ---
+        for i, r in a_df.iterrows():
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([1,4,1,1], vertical_alignment="center")
+
+                if r['Time']:
+                    c1.write(f"**{r['Time']}**")
+
+                c2.write(f"**{r['Events']}**")
+                if r['Notes']:
+                    c2.caption(f"📝 {r['Notes']}")
+
+                if r['Location']:
+                    c3.markdown(
+                        f'<a href="{r["Location"]}" target="_blank">📍 Map</a>',
+                        unsafe_allow_html=True
+                    )
+
+                if c4.button("⬆️", key=f"up_{i}_{date_str}"):
+                    new_df = move_row(a_df.copy(), i, "up")
+                    st.session_state.app_data["itinerary"][sel_date]["activities"] = new_df
+                    save_data(); st.rerun()
+
+                if c4.button("⬇️", key=f"down_{i}_{date_str}"):
+                    new_df = move_row(a_df.copy(), i, "down")
+                    st.session_state.app_data["itinerary"][sel_date]["activities"] = new_df
+                    save_data(); st.rerun()
+
+    # --- TICKETS (unchanged) ---
     st.divider()
     st.subheader(f"🎟️ Tickets for {sel_date.strftime('%b %d')}")
-    
+
     date_ticket_dir = os.path.join(TICKET_BASE_DIR, date_str)
     os.makedirs(date_ticket_dir, exist_ok=True)
 
-    # Display Existing Tickets for this day
     current_tickets = os.listdir(date_ticket_dir)
     if current_tickets:
         for t_file in current_tickets:
@@ -184,19 +211,17 @@ if page == "🗺️ Itinerary":
     else:
         st.info("No tickets uploaded for this day.")
 
-    # Upload New Ticket (Locked to this date)
-    new_ticket = st.file_uploader("Upload ticket for this day (PDF/Image)", type=["pdf", "png", "jpg", "jpeg"], key=f"up_{date_str}")
+    new_ticket = st.file_uploader("Upload ticket for this day", type=["pdf","png","jpg","jpeg"], key=f"up_{date_str}")
     if new_ticket:
         with open(os.path.join(date_ticket_dir, new_ticket.name), "wb") as f:
             f.write(new_ticket.getbuffer())
-        st.success(f"Ticket saved for {sel_date.strftime('%B %d')}!")
-        st.rerun()
+        st.success("Ticket saved!"); st.rerun()
 
-# --- PAGE: PACKING LIST ---
+# --- PACKING LIST (UNCHANGED) ---
 elif page == "🎒 Packing List":
     st.title("🎒 Individual Packing Lists")
     users = st.session_state.app_data["packing"]["users"]
-    
+
     c_new, c_sel = st.columns(2)
     with c_new.form("add_user", clear_on_submit=True):
         u_name = st.text_input("Add Traveler")
@@ -211,7 +236,7 @@ elif page == "🎒 Packing List":
     if sel_user != "-- Select --":
         st.divider()
         u_data = users[sel_user]
-        
+
         col_l, col_r = st.columns([2, 1])
         with col_l:
             st.subheader(f"✅ {sel_user}'s Checklist")
@@ -224,24 +249,23 @@ elif page == "🎒 Packing List":
                 if cb.button("🗑️", key=f"del_{sel_user}_{item}"):
                     del u_data["items"][item]
                     save_data(); st.rerun()
-        
+
         with col_r:
             st.subheader("🛠️ Tools")
-            # Individual CSV Upload
             u_csv = st.file_uploader(f"Upload CSV for {sel_user}", type="csv", key=f"csv_{sel_user}")
             if u_csv:
                 items = pd.read_csv(u_csv, header=None)[0].dropna().astype(str).tolist()
                 for i in items:
                     if i not in u_data["items"]: u_data["items"][i] = False
                 save_data(); st.success("CSV Imported!"); st.rerun()
-            
+
             with st.form(f"man_{sel_user}", clear_on_submit=True):
                 m_in = st.text_input("Add Item")
                 if st.form_submit_button("Add"):
                     if m_in and m_in not in u_data["items"]:
                         u_data["items"][m_in] = False
                         save_data(); st.rerun()
-            
-            if st.button(f"Delete {sel_user}'s Profile", type="secondary"):
+
+            if st.button(f"Delete {sel_user}'s Profile"):
                 del users[sel_user]
                 save_data(); st.rerun()
