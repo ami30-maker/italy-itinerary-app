@@ -4,7 +4,6 @@ import json
 import os
 from datetime import date, timedelta
 import urllib.parse
-import io
 
 # --- SECURITY ---
 PASSWORD = st.secrets.get("APP_PASSWORD", "Ivers0n")
@@ -16,31 +15,30 @@ if not st.session_state.auth:
     st.markdown("<h2 style='text-align: center; margin-top: 20vh;'>🇮🇹 Benvenuto</h2>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        pwd = st.text_input("Enter password", type="password")
+        pwd = st.text_input("Enter password", type="password", placeholder="Password...")
         if pwd == PASSWORD:
             st.session_state.auth = True
             st.rerun()
     st.stop()
 
-# --- CONFIG ---
+# --- CONFIG & STYLES ---
 st.set_page_config(page_title="Italy Trip Planner", layout="wide", page_icon="🇮🇹")
 
-# --- STYLES ---
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; max-width: 1100px; }
-    .lodging-card { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .timeline-time { font-weight: 700; color: #3f51b5; font-size: 1.1rem; }
-    .timeline-title { font-weight: bold; font-size: 1.2rem; margin: 0; color: #2c3e50;}
-    .master-item { background: #f0f2f6; padding: 5px 10px; border-radius: 5px; margin-bottom: 5px; display: flex; justify-content: space-between; }
+    .timeline-time { font-weight: 700; color: #3f51b5; font-size: 1.15rem; }
+    .timeline-title { font-weight: bold; font-size: 1.25rem; margin-bottom: 0px; color: #2c3e50;}
+    .timeline-notes { color: #6c757d; font-size: 0.95rem; font-style: italic; margin-top: 4px;}
+    .lodging-card { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; height: 100%;}
     </style>
 """, unsafe_allow_html=True)
 
+# --- DATA MANAGEMENT ---
 SAVE_FILE = "my_trip_data.json"
 TICKET_DIR = "tickets"
 os.makedirs(TICKET_DIR, exist_ok=True)
 
-# --- DATA PERSISTENCE ---
 def save_data():
     serializable_itinerary = {}
     for d, content in st.session_state.app_data["itinerary"].items():
@@ -53,11 +51,10 @@ def save_data():
         json.dump(full_data, f)
 
 def load_data():
-    if not os.path.exists(SAVE_FILE):
-        return {"itinerary": {}, "packing": {"master": [], "users": {}}}
+    base = {"itinerary": {}, "packing": {"master": [], "users": {}}}
+    if not os.path.exists(SAVE_FILE): return base
     try:
-        with open(SAVE_FILE, "r") as f:
-            raw = json.load(f)
+        with open(SAVE_FILE, "r") as f: raw = json.load(f)
         itinerary = {}
         for d_str, content in raw.get("itinerary", {}).items():
             itinerary[date.fromisoformat(d_str)] = {
@@ -66,156 +63,223 @@ def load_data():
             }
         packing = raw.get("packing", {"master": [], "users": {}})
         return {"itinerary": itinerary, "packing": packing}
-    except:
-        return {"itinerary": {}, "packing": {"master": [], "users": {}}}
+    except: return base
 
 if "app_data" not in st.session_state:
     st.session_state.app_data = load_data()
 
-# --- NAVIGATION ---
-page = st.sidebar.radio("Navigation", ["🗺️ Itinerary", "🎒 Packing List"])
+# --- HELPERS ---
+def parse_time(t_str):
+    t = str(t_str).strip().upper()
+    if not t: return 9999
+    try:
+        is_pm = "PM" in t
+        is_am = "AM" in t
+        clean = t.replace("AM", "").replace("PM", "").strip()
+        parts = clean.split(":")
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        if is_pm and h != 12: h += 12
+        if is_am and h == 12: h = 0
+        return h * 60 + m
+    except: return 9999
 
-# --- PAGE 1: ITINERARY ---
+def get_group(t_str):
+    m = parse_time(t_str)
+    if m == 9999: return "Flexible / Anytime"
+    if m < 720: return "Morning"
+    if m < 1020: return "Afternoon"
+    return "Evening"
+
+def process_itinerary_links(df, city):
+    df = df.fillna("")
+    for i, row in df.iterrows():
+        q = row["Manual Location"].strip() if row["Manual Location"].strip() else row["Events"].strip()
+        if q:
+            df.at[i, "Location"] = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(f'{q} {city} Italy')}"
+    df["Group"] = df["Time"].apply(get_group)
+    df["_sort"] = df["Time"].apply(parse_time)
+    order = {"Morning":1, "Afternoon":2, "Evening":3, "Flexible / Anytime":4}
+    df["_g_sort"] = df["Group"].map(order)
+    return df.sort_values(["_g_sort", "_sort"]).drop(columns=["_sort", "_g_sort"]).reset_index(drop=True)
+
+# --- SIDEBAR NAVIGATION ---
+st.sidebar.title("🇮🇹 Italy 2026")
+page = st.sidebar.radio("Navigate to:", ["🗺️ Itinerary", "🎒 Packing List"])
+
+# --- PAGE: ITINERARY ---
 if page == "🗺️ Itinerary":
+    st.sidebar.divider()
     st.sidebar.subheader("📅 Trip Dates")
-    start_init, end_init = date(2026, 5, 4), date(2026, 5, 20)
-    dr = st.sidebar.date_input("Trip Duration", value=(start_init, end_init))
+    dr = st.sidebar.date_input("Trip Window", value=(date(2026, 5, 4), date(2026, 5, 20)))
     
     if isinstance(dr, tuple) and len(dr) == 2:
-        trip_days = [dr[0] + timedelta(days=i) for i in range((dr[1] - dr[0]).days + 1)]
+        days = [dr[0] + timedelta(days=i) for i in range((dr[1]-dr[0]).days + 1)]
     else: st.stop()
 
     if "nav_idx" not in st.session_state: st.session_state.nav_idx = 0
-    st.session_state.nav_idx = min(st.session_state.nav_idx, len(trip_days)-1)
-
-    # Nav Header
-    c_prev, c_title, c_next = st.columns([1, 3, 1])
-    if c_prev.button("⬅️ Previous"): st.session_state.nav_idx = max(0, st.session_state.nav_idx - 1); st.rerun()
-    if c_next.button("Next ➡️"): st.session_state.nav_idx = min(len(trip_days)-1, st.session_state.nav_idx + 1); st.rerun()
+    st.session_state.nav_idx = min(st.session_state.nav_idx, len(days)-1)
     
-    cur_date = trip_days[st.session_state.nav_idx]
-    c_title.markdown(f"<h2 style='text-align:center;'>{cur_date.strftime('%A, %B %d')}</h2>", unsafe_allow_html=True)
+    # Nav Controls
+    c_prev, c_head, c_next = st.columns([1, 4, 1])
+    with c_prev:
+        if st.button("⬅️ Prev Day", disabled=st.session_state.nav_idx==0): 
+            st.session_state.nav_idx -= 1
+            st.rerun()
+    with c_next:
+        if st.button("Next Day ➡️", disabled=st.session_state.nav_idx==len(days)-1):
+            st.session_state.nav_idx += 1
+            st.rerun()
+    
+    sel_date = days[st.session_state.nav_idx]
+    with c_head:
+        st.markdown(f"<h1 style='text-align:center;'>{sel_date.strftime('%A, %B %d')}</h1>", unsafe_allow_html=True)
 
-    if cur_date not in st.session_state.app_data["itinerary"]:
-        st.session_state.app_data["itinerary"][cur_date] = {
-            "lodging": pd.DataFrame([{"Type": "Start:", "City": "", "Check-in/Check-out": "", "Address": ""},
-                                     {"Type": "End:", "City": "", "Check-in/Check-out": "", "Address": ""}]),
+    if sel_date not in st.session_state.app_data["itinerary"]:
+        st.session_state.app_data["itinerary"][sel_date] = {
+            "lodging": pd.DataFrame([{"Type":"Start:", "City":"", "Check-in/Check-out":"", "Address":""},
+                                     {"Type":"End:", "City":"", "Check-in/Check-out":"", "Address":""}]),
             "activities": pd.DataFrame(columns=["Group", "Events", "Time", "Tickets", "Manual Location", "Location", "Notes"])
         }
     
-    day_data = st.session_state.app_data["itinerary"][cur_date]
-    edit_mode = st.toggle("Edit Mode")
+    day_data = st.session_state.app_data["itinerary"][sel_date]
+    edit_mode = st.toggle("✏️ Edit Mode", value=False)
+    st.divider()
 
     if edit_mode:
         u_lod = st.data_editor(day_data["lodging"], use_container_width=True, hide_index=True)
         u_act = st.data_editor(day_data["activities"], num_rows="dynamic", use_container_width=True, hide_index=True)
         if not u_lod.equals(day_data["lodging"]) or not u_act.equals(day_data["activities"]):
-            st.session_state.app_data["itinerary"][cur_date] = {"lodging": u_lod, "activities": u_act}
+            city = u_lod.iloc[1]["City"] if u_lod.iloc[1]["City"] else "Italy"
+            u_act = process_itinerary_links(u_act, city)
+            st.session_state.app_data["itinerary"][sel_date] = {"lodging": u_lod, "activities": u_act}
             save_data(); st.rerun()
     else:
-        # Lodging Card View (Boxes only show if data exists)
-        lod_df = day_data["lodging"]
-        valid_lod = lod_df[(lod_df["City"].str.strip() != "") | (lod_df["Address"].str.strip() != "")]
-        if not valid_lod.empty:
-            st.subheader("🏨 Lodging & Transit")
-            cols = st.columns(len(valid_lod))
-            for i, (idx, row) in enumerate(valid_lod.iterrows()):
-                with cols[i]:
-                    st.markdown(f"<div class='lodging-card'><b>{row['Type']}</b> {row['City']}<br>🕐 {row['Check-in/Check-out']}<br>📍 {row['Address']}</div>", unsafe_allow_html=True)
-
-# --- PAGE 2: PACKING LIST ---
-elif page == "🎒 Packing List":
-    st.title("🎒 Packing Management")
-    
-    col1, col2 = st.columns([1, 2], gap="large")
-    
-    # 1. MASTER LIST SECTION
-    with col1:
-        st.subheader("🌟 Master List")
-        st.info("Items here are automatically added to everyone's list.")
+        # Lodging Horizontal
+        l_df = day_data["lodging"]
+        valid_l = l_df[l_df["City"].str.strip() != ""]
+        if not valid_l.empty:
+            st.subheader("🏨 Transit & Lodging")
+            l_cols = st.columns(len(valid_l))
+            for i, (idx, row) in enumerate(valid_l.iterrows()):
+                with l_cols[i]:
+                    st.markdown("<div class='lodging-card'>", unsafe_allow_html=True)
+                    st.write(f"**{row['Type']}** {row['City']}")
+                    if row['Check-in/Check-out']: st.write(f"🕐 {row['Check-in/Check-out']}")
+                    if row['Address']:
+                        m_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(f'{row['Address']} {row['City']} Italy')}"
+                        st.markdown(f"📍 [{row['Address']}]({m_url})")
+                    st.markdown("</div>", unsafe_allow_html=True)
         
+        # Itinerary
+        a_df = day_data["activities"]
+        if not a_df.empty:
+            st.subheader("🏛️ Today's Activities")
+            for grp in ["Morning", "Afternoon", "Evening", "Flexible / Anytime"]:
+                sub = a_df[a_df["Group"] == grp]
+                if not sub.empty:
+                    st.markdown(f"#### {grp}")
+                    for _, row in sub.iterrows():
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([1.5, 5, 1.5], vertical_alignment="center")
+                            c1.markdown(f"<span class='timeline-time'>{row['Time']}</span>", unsafe_allow_html=True)
+                            c2.markdown(f"<p class='timeline-title'>{row['Events']}</p>", unsafe_allow_html=True)
+                            if row['Notes']: c2.markdown(f"<p class='timeline-notes'>📝 {row['Notes']}</p>", unsafe_allow_html=True)
+                            if row['Tickets']: c3.write("🎟️ **Tickets**")
+                            if row['Location']: c3.markdown(f"[📍 Open Map]({row['Location']})")
+
+    st.divider()
+    st.subheader("🎟️ Upload Tickets")
+    up = st.file_uploader("Drop PDF here", type="pdf")
+    if up:
+        with open(os.path.join(TICKET_DIR, up.name), "wb") as f: f.write(up.getbuffer())
+        st.success("Saved!")
+
+# --- PAGE: PACKING LIST ---
+elif page == "🎒 Packing List":
+    st.title("🎒 Packing List Manager")
+    
+    c1, c2 = st.columns([1, 2], gap="large")
+    
+    with c1:
+        st.subheader("🌟 Master List")
         # Add Item
-        with st.form("add_master", clear_on_submit=True):
-            new_m = st.text_input("Add Item for Everyone")
-            if st.form_submit_button("Add to Master"):
-                if new_m and new_m not in st.session_state.app_data["packing"]["master"]:
-                    st.session_state.app_data["packing"]["master"].append(new_m)
+        with st.form("master_add", clear_on_submit=True):
+            m_in = st.text_input("Add Item for Everyone")
+            if st.form_submit_button("Add to All"):
+                if m_in and m_in not in st.session_state.app_data["packing"]["master"]:
+                    st.session_state.app_data["packing"]["master"].append(m_in)
                     save_data(); st.rerun()
         
-        # CSV Upload
-        up_csv = st.file_uploader("Upload Master CSV", type="csv")
-        if up_csv:
-            csv_df = pd.read_csv(up_csv, header=None)
-            items = csv_df[0].dropna().astype(str).tolist()
+        # CSV
+        csv = st.file_uploader("Upload CSV", type="csv")
+        if csv:
+            items = pd.read_csv(csv, header=None)[0].dropna().tolist()
             st.session_state.app_data["packing"]["master"] = list(set(st.session_state.app_data["packing"]["master"] + items))
-            save_data(); st.success("CSV Imported!"); st.rerun()
-
-        # Delete Master Items
+            save_data(); st.rerun()
+            
+        # Delete items
         for i, item in enumerate(st.session_state.app_data["packing"]["master"]):
-            c_it, c_dl = st.columns([4, 1])
-            c_it.write(f"• {item}")
-            if c_dl.button("🗑️", key=f"del_m_{i}"):
+            ca, cb = st.columns([4, 1])
+            ca.write(f"• {item}")
+            if cb.button("🗑️", key=f"dm_{i}"):
                 st.session_state.app_data["packing"]["master"].pop(i)
                 save_data(); st.rerun()
 
-    # 2. INDIVIDUAL TRAVELER SECTION
-    with col2:
-        st.subheader("👤 Individual Traveler Lists")
+    with c2:
+        st.subheader("👤 Individual Lists")
+        users = st.session_state.app_data["packing"]["users"]
         
-        # Create or Select Traveler
-        c_sel, c_new = st.columns([1, 1])
-        all_users = list(st.session_state.app_data["packing"]["users"].keys())
-        selected_user = c_sel.selectbox("View Traveler:", ["-- Select --"] + all_users)
-        
-        new_user_name = c_new.text_input("New Traveler Name")
-        if c_new.button("Add Traveler"):
-            name = new_user_name.strip().title()
-            if name and name not in st.session_state.app_data["packing"]["users"]:
-                st.session_state.app_data["packing"]["users"][name] = {"personal": [], "checked": []}
-                save_data(); st.rerun()
-
-        if selected_user != "-- Select --":
-            st.divider()
-            user_data = st.session_state.app_data["packing"]["users"][selected_user]
-            
-            # Action: Delete Entire List
-            if st.button(f"🗑️ Delete {selected_user}'s Entire Profile", type="secondary"):
-                del st.session_state.app_data["packing"]["users"][selected_user]
-                save_data(); st.rerun()
-
-            st.markdown(f"### {selected_user}'s Checklist")
-            
-            # Combine Master + Personal for display
-            master_items = st.session_state.app_data["packing"]["master"]
-            personal_items = user_data.get("personal", [])
-            
-            # Logic for Checking/Unchecking
-            def toggle_check(item):
-                if item in user_data["checked"]: user_data["checked"].remove(item)
-                else: user_data["checked"].append(item)
-                save_data()
-
-            # Render Master Items first
-            st.caption("From Master List:")
-            for item in master_items:
-                is_checked = item in user_data["checked"]
-                st.checkbox(item, value=is_checked, key=f"check_{selected_user}_{item}", on_change=toggle_check, args=(item,))
-            
-            # Render Personal Items
-            st.caption("Personal Items:")
-            for item in personal_items:
-                c_c, c_d = st.columns([5, 1])
-                is_checked = item in user_data["checked"]
-                c_c.checkbox(item, value=is_checked, key=f"check_{selected_user}_{item}", on_change=toggle_check, args=(item,))
-                if c_d.button("🗑️", key=f"del_p_{selected_user}_{item}"):
-                    user_data["personal"].remove(item)
-                    if item in user_data["checked"]: user_data["checked"].remove(item)
+        # Add Traveler
+        with st.form("add_user", clear_on_submit=True):
+            u_in = st.text_input("New Traveler Name")
+            if st.form_submit_button("Create Profile"):
+                name = u_in.strip().title()
+                if name and name not in users:
+                    users[name] = {"personal": [], "checked": []}
                     save_data(); st.rerun()
 
-            # Add Personal Item
-            with st.form(f"add_p_{selected_user}", clear_on_submit=True):
-                p_item = st.text_input(f"Add item just for {selected_user}")
+        # Select Traveler
+        sel_user = st.selectbox("Choose Traveler:", ["-- Select --"] + list(users.keys()))
+        
+        if sel_user != "-- Select --":
+            u_data = users[sel_user]
+            st.divider()
+            st.markdown(f"### {sel_user}'s Checklist")
+            
+            # Action: Delete User
+            if st.button(f"Delete {sel_user}'s Entire Profile", type="secondary"):
+                del users[sel_user]
+                save_data(); st.rerun()
+
+            # The List Rendering
+            master_list = st.session_state.app_data["packing"]["master"]
+            personal_list = u_data["personal"]
+            
+            def toggle(item):
+                if item in u_data["checked"]: u_data["checked"].remove(item)
+                else: u_data["checked"].append(item)
+                save_data()
+
+            st.caption("Common Items")
+            for item in master_list:
+                chk = item in u_data["checked"]
+                st.checkbox(item, value=chk, key=f"chk_{sel_user}_{item}", on_change=toggle, args=(item,))
+            
+            st.caption("Personal Items")
+            for item in personal_list:
+                ca, cb = st.columns([5, 1])
+                chk = item in u_data["checked"]
+                ca.checkbox(item, value=chk, key=f"pchk_{sel_user}_{item}", on_change=toggle, args=(item,))
+                if cb.button("🗑️", key=f"dp_{sel_user}_{item}"):
+                    u_data["personal"].remove(item)
+                    if item in u_data["checked"]: u_data["checked"].remove(item)
+                    save_data(); st.rerun()
+            
+            # Add Personal
+            with st.form(f"p_add_{sel_user}", clear_on_submit=True):
+                p_in = st.text_input(f"Add item for {sel_user}")
                 if st.form_submit_button("Add to My List"):
-                    if p_item and p_item not in user_data["personal"]:
-                        user_data["personal"].append(p_item)
+                    if p_in and p_in not in u_data["personal"]:
+                        u_data["personal"].append(p_in)
                         save_data(); st.rerun()
